@@ -1,0 +1,22 @@
+### vim ###
+
+.*.sw[a-z]
+*~
+Session.vim
+
+
+### SublimeText ###
+
+# SublimeText project files
+/*.sublime-project
+*.sublime-workspace
+sftp-config*.json
+
+
+### Python ###
+
+*.py[cod]
+
+
+### Rope ###
+/.ropeproject/

@@ -375,10 +375,9 @@ def monitor(modem, mask, interval):
             sys.stdout.flush()
             time.sleep(interval)
     except KeyboardInterrupt:
-        return
+        pass
     except ModemCommunitationError:
         print "ERROR: modem communication problem"
-        return
 
 
 def main(argv=sys.argv):

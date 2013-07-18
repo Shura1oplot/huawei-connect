@@ -30,7 +30,7 @@ class ModemStateBase(object):
     def start(self):
         raise NotImplementedError()
 
-    def signal_quality(self):
+    def signal_strength(self):
         raise NotImplementedError()
 
     def network_info(self):
@@ -143,7 +143,7 @@ class ModemStateNotFound(ModemStateBase):
     def start(self):
         raise ModemException(self._not_found_err_msg)
 
-    def signal_quality(self):
+    def signal_strength(self):
         raise ModemException(self._not_found_err_msg)
 
     def network_info(self):
@@ -183,7 +183,7 @@ class ModemStateClosed(ModemStateBase):
     def start(self):
         raise ModemException(self._not_opened_msg)
 
-    def signal_quality(self):
+    def signal_strength(self):
         raise ModemException(self._not_opened_msg)
 
     def network_info(self):
@@ -196,6 +196,8 @@ class ModemStateOpened(ModemStateBase):
         super(ModemStateOpened, self).__init__(context)
 
         self._tty = pexpect.spawn("screen", args=[self._context.tty, "9600"])
+        self._send("AT", "OK", timeout=10)
+        self._send("AT^CURC=0", "OK")
 
     def find(self):
         self.close()
@@ -210,7 +212,6 @@ class ModemStateOpened(ModemStateBase):
         self._context.state = "closed"
 
     def start(self):
-        self._send("AT", "OK", timeout=10)
         self._send("ATZ", "OK")
         self._send("ATQ0 V1 E1 S0=0", "OK")
         self._send(
@@ -256,18 +257,18 @@ class ModemStateOpened(ModemStateBase):
             return pattern.search(response)
         return re.search(pattern, response)
 
-    _regex_signal_quality = re.compile(r"\+CSQ: (?P<rssi>\d+),(?P<ber>\d+)")
+    _regex_signal_strength = re.compile(r"\+CSQ: (?P<rssi>\d+),(?P<ber>\d+)")
 
-    def signal_quality(self):
+    def signal_strength(self):
         self._send("AT+CSQ")
-        response = self._expect(self._regex_signal_quality)
+        response = self._expect(self._regex_signal_strength)
         rssi = int(response.group("rssi"))
         if rssi == 99:
-            return None
-        dBm = (rssi * 2) - 113
-        return dBm
+            return -1
+        return rssi
 
-    _regex_network_info = re.compile(r"\+COPS: (?P<mode>[0-4]),(?P<format>[0-2]),(?P<oper>\".*\"),(?P<act>[0-7])")
+    _regex_network_info = re.compile(
+        r"\+COPS: (?P<mode>[0-4])(?:,(?P<format>[0-2]),(?P<oper>\".*\"),(?P<act>[0-7]))?")
 
     def network_info(self):
         self._send("AT+COPS?")
@@ -279,23 +280,29 @@ class ModemStateOpened(ModemStateBase):
         else:
             oper = "unknow"
 
-        act = int(response.group("act"))
-        # 0 GSM
-        # 1 GSM Compact
-        # 2 UTRAN
-        # 3 GSM w/EGPRS             = 2g
-        # 4 UTRAN w/HSDPA           = 3g
-        # 5 UTRAN w/HSUPA           = 3g
-        # 6 UTRAN w/HSDPA and HSUPA = 3g
-        # 7 E-UTRAN                 = LTE
-        if act == 3:
-            act = "2g"
-        elif 4 <= act <= 6:
-            act = "3g"
-        elif act == 7:
-            act = "LTE"
+        # 0 GSM                        = 2G or 2.5G if GPRS
+        # 1 GSM Compact                = 2G or 2.5G if GPRS
+        # 2 UTRAN                      = 3G
+        # 3 GSM with EGPRS             = 2.75G
+        # 4 UTRAN with HSDPA           = 3G
+        # 5 UTRAN with HSUPA           = 3G
+        # 6 UTRAN with HSDPA and HSUPA = 3G
+        # 7 E-UTRAN                    = 4G (LTE)
+        act = response.group("act")
+        if act is None:
+            act = "N/A"
         else:
-            act = "unknow"
+            act = int(act)
+            if act <= 1:
+                act = "2G"
+            elif act == 2:
+                act = "3G"
+            elif act == 3:
+                act = "2G+"
+            elif 4 <= act <= 6:
+                act = "3G+"
+            elif act == 7:
+                act = "4G"
 
         return act, oper
 
@@ -352,22 +359,25 @@ class Modem(object):
     def reset(self):
         self._state.reset()
 
-    def signal_quality(self):
-        return self._state.signal_quality()
+    def signal_strength(self):
+        return self._state.signal_strength()
 
     def network_info(self):
         return self._state.network_info()
 
 
-def monitor(modem, mask, sleep_time):
+def monitor(modem, mask, interval):
     try:
         while True:
-            sq = modem.signal_quality()
+            ss = modem.signal_strength()
             at, op = modem.network_info()
-            sys.stdout.write(mask.format(sq=sq, at=at, op=op))
+            sys.stdout.write(mask.format(ss=ss, at=at, op=op))
             sys.stdout.flush()
-            time.sleep(sleep_time)
+            time.sleep(interval)
     except KeyboardInterrupt:
+        return
+    except ModemCommunitationError:
+        print "ERROR: modem communication problem"
         return
 
 
@@ -378,8 +388,8 @@ def main(argv=sys.argv):
         description="Huawei E3276 connect program",
         epilog="""\
 MASK controls. Interpreted sequences are:
-  {sq}   signal quality in dBm
-  {at}   access technology: 2g, 3g, LTE or unknow
+  {ss}   signal strength: -1..31
+  {at}   access technology: 2G, 2G+, 3G, 3G+, 4G or unknow
   {op}   operator string
 """
     )
@@ -394,11 +404,11 @@ MASK controls. Interpreted sequences are:
         type=str,
         dest="mask",
         nargs="?",
-        const="{sq}\t{at}\t{op}\n",
-        help="start monitoring after a connection. Default mask is '{sq}\\t{at}\\t{op}\\n'"
+        const="{ss}\t{at}\t{op}\n",
+        help="start monitoring after a connection. Default mask is '{ss}\\t{at}\\t{op}\\n'"
     )
     parser.add_argument(
-        "-t", "--sleep-time",
+        "-i", "--interval",
         metavar="SEC",
         type=int,
         default=10,
@@ -416,10 +426,10 @@ MASK controls. Interpreted sequences are:
     modem.open()
     try:
         modem.start()
-    except ModemCommunitationError as e:
-        print "ERROR: {}".format(e)
+    except ModemCommunitationError:
+        print "ERROR: can not connect to internet"
     if args.mask:
-        monitor(modem, args.mask, args.sleep_time)
+        monitor(modem, args.mask, args.interval)
     modem.close()
     return 0
 

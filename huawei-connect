@@ -377,7 +377,7 @@ def monitor(modem, mask, interval):
     except KeyboardInterrupt:
         pass
     except ModemCommunitationError:
-        print "ERROR: modem communication problem"
+        print "ERROR: modem communication fail"
 
 
 def main(argv=sys.argv):
@@ -404,7 +404,8 @@ MASK controls. Interpreted sequences are:
         dest="mask",
         nargs="?",
         const="{ss}\t{at}\t{op}\n",
-        help="start monitoring after a connection. Default mask is '{ss}\\t{at}\\t{op}\\n'"
+        help=("start monitoring after a connection. Default mask is "
+              "'{ss}\\t{at}\\t{op}\\n'")
     )
     parser.add_argument(
         "-i", "--interval",
@@ -420,13 +421,12 @@ MASK controls. Interpreted sequences are:
     if not modem.find():
         print "ERROR: modem is not found"
         return 1
-
     modem.reset()
     modem.open()
     try:
         modem.start()
     except ModemCommunitationError:
-        print "ERROR: can not connect to internet"
+        print "ERROR: can't connect to the Internet"
     if args.mask:
         monitor(modem, args.mask, args.interval)
     modem.close()

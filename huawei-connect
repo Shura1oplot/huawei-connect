@@ -502,19 +502,16 @@ def setup_logging(quite, debug):
 
 
 def monitor(modem, mask, interval):
-    try:
-        while True:
-            try:
-                ss = modem.signal_strength()
-                at, op = modem.network_info()
-            except ModemCommunitationError:
-                pass
-            else:
-                sys.stdout.write(mask.format(ss=ss, at=at, op=op))
-                sys.stdout.flush()
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        pass
+    while True:
+        try:
+            ss = modem.signal_strength()
+            at, op = modem.network_info()
+        except ModemCommunitationError:
+            pass
+        else:
+            sys.stdout.write(mask.format(ss=ss, at=at, op=op))
+            sys.stdout.flush()
+        time.sleep(interval)
 
 
 def main(argv=sys.argv):
@@ -576,7 +573,10 @@ FORMAT controls output. Interpreted sequences are:
     except ModemCommunitationError:
         print "{}: can't connect to the Internet".format(argv[0])
     if args.mask:
-        monitor(modem, args.mask, args.interval)
+        try:
+            monitor(modem, args.mask, args.interval)
+        except KeyboardInterrupt:
+            pass
     modem.close()
     return 0
 

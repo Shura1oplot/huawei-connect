@@ -198,7 +198,7 @@ class ModemStateClosed(ModemStateBase):
                 break
             time.sleep(0.5)
         else:
-            err_msg = "modem has not returned to life after reset"
+            err_msg = "modem hasn't returned to life after reset"
             self.logger.error(err_msg)
             raise ModemHardwareException(err_msg)
 
@@ -237,7 +237,7 @@ class pexpect_logger(object):
 
 class ModemConnection(object):
 
-    _expect_timeout_msg = "modem has not sent what was expected until timeout"
+    _expect_timeout_msg = "modem hasn't sent what was expected until timeout"
     _screen_init_time = 2
 
     def __init__(self, tty):

@@ -560,7 +560,7 @@ def main(argv=sys.argv):
             """\
             FORMAT controls output. Interpreted sequences are:
               {ss}   signal strength: -1..31
-              {at}   access technology: 2G, 2G+, 3G, 3G+, 4G or unknow
+              {at}   access technology: 2G, 2G+, 3G, 3G+, 4G or unknown
               {op}   operator string
             """
         )

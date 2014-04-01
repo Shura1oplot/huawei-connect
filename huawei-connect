@@ -13,6 +13,14 @@ import re
 import pexpect
 import argparse
 import textwrap
+from string import maketrans
+
+
+def to_unicode(obj):
+    if isinstance(obj, unicode):
+        return obj
+
+    return str(obj).decode("utf-8")
 
 
 class ModemException(Exception):
@@ -282,11 +290,12 @@ class pexpect_logger(object):
 
     def __init__(self, logger, action):
         super(pexpect_logger, self).__init__()
+
         self._logger = logger
         self._action = action
 
     def write(self, msg):
-        for line in msg.split("\n"):
+        for line in to_unicode(msg).split("\n"):
             line = "".join(c for c in line if c >= " ").strip()
 
             if line:
@@ -449,9 +458,6 @@ class StateOpened(StateBase):
         match = self._con.expect(self._regex_signal_strength)
         rssi = int(match.group("rssi"))
 
-        if rssi == 99:
-            return -1
-
         return rssi
 
     _regex_network_info = re.compile(
@@ -580,94 +586,138 @@ class Modem(object):
         return self._state.network_info()
 
 
-def setup_logging(quite, debug):
-    if quite:
-        stream = open("/dev/null", "w")
-    else:
-        stream = sys.stderr
-
-    logging.basicConfig(
-        stream=stream,
-        level="DEBUG" if debug else "ERROR"
-    )
-
-
 def monitor(modem, mask, interval):
+    mask = to_unicode(mask)
+
+    special_chars = {"\\0": "\0", "\\a": "\a", "\\b": "\b", "\\t": "\t",
+                     "\\n": "\n", "\\v": "\v", "\\f": "\f", "\\r": "\r"}
+
+    for old, new in special_chars.items():
+        mask = mask.replace(old, new)
+
+    last_line_len = 0
+
     while True:
         try:
-            ss = modem.signal_strength()
+            ss_vl = modem.signal_strength()
             at, op = modem.network_info()
         except CommunitationError:
             continue
 
-        sys.stdout.write(mask.format(ss=ss, at=at, op=op))
+        if ss_vl == 99:
+            ss_dB = -113
+            ss_bi = 0
+            ss_br = " "
+
+        else:
+            ss_dB = -113 + ss_vl * 2
+
+            if ss_vl < 2:
+                ss_bi = 0
+                ss_br = " "
+            elif ss_vl < 10:
+                ss_bi = 1
+                ss_br = "▂"
+            elif ss_vl < 15:
+                ss_bi = 2
+                ss_br = "▄"
+            elif ss_vl < 20:
+                ss_bi = 3
+                ss_br = "▆"
+            else:
+                ss_bi = 4
+                ss_br = "█"
+
+        kwargs = {"ss_vl": ss_vl, "ss_dB": ss_dB, "ss_br": ss_br,
+                  "ss_bi": ss_bi, "at": at, "op": op}
+
+        line = mask.format(ld="", **kwargs)
+        line_len = len(line)
+
+        if last_line_len > line_len:
+            len_diff = last_line_len - line_len
+        else:
+            len_diff = 0
+
+        last_line_len = line_len
+
+        sys.stdout.write(mask.format(ld=" " * len_diff, **kwargs))
         sys.stdout.flush()
         time.sleep(interval)
 
 
 def main(argv=sys.argv):
     parser = argparse.ArgumentParser(
-        prog=argv[0],
+        prog=os.path.basename(argv[0]),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Huawei E3276 connect program",
         epilog=textwrap.dedent(
             """\
-            FORMAT controls output. Interpreted sequences are:
-              {ss}   signal strength: -1..31
-              {at}   access technology: 2G, 2G+, 3G, 3G+, 4G or unknown
-              {op}   operator string
+            MASK controls output. Interpreted sequences are:
+              {ss_vl}   raw value of signal strength: 0..31 or 99
+              {ss_dB}   signal strength in dB: -113..-51
+              {ss_br}   signal strength bar: " ▂▄▆█"
+              {ss_bi}   signal strength bar as number: 0..4
+              {at}      access technology: 2G, 2G+, 3G, 3G+, 4G or unknown
+              {op}      operator string
+              {ld}      differences between length of last two lines in spaces
             """
-        )
+        ),
     )
     parser.add_argument(
         "-v", "--version",
         action="version",
-        version="%(prog)s v1.1.1"
+        version="%(prog)s v1.2.0",
+    )
+    parser.add_argument(
+        "-a", "--apn",
+        type=str,
+        default="internet",
+        help="default apn is \"internet\"",
     )
     parser.add_argument(
         "-m", "--monitor",
-        metavar="FORMAT",
+        metavar="MASK",
         type=str,
         dest="mask",
         nargs="?",
-        const="{ss}\t{at}\t{op}\n",
-        help=("start monitoring after a connection. Default format is "
-              "'{ss}\\t{at}\\t{op}\\n'")
+        const="\r{at} {ss_br} {op}{ld}",
+        help=("monitor signal strength if connection is success "
+              "(default format is \"\\r{at} {ss_br} {op}{ld}\""),
     )
     parser.add_argument(
         "-i", "--interval",
         metavar="SEC",
         type=int,
-        default=10,
-        help="interval in seconds between requests while monitoring"
-    )
-    parser.add_argument(
-        "-q", "--quite",
-        action="store_true",
-        help="suppress all error messages"
+        default=5,
+        help=("interval in seconds between requests while monitoring "
+              "(default interval is 5)"),
     )
     parser.add_argument(
         "-d", "--debug",
         action="store_true",
-        help="print debug messages to stderr"
+        help="print debug messages to stderr",
     )
     args = parser.parse_args(argv[1:])
 
-    setup_logging(args.quite, args.debug)
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.ERROR,
+        stream=sys.stderr,
+    )
 
-    modem = Modem(apn="internet")
+    modem = Modem(apn=args.apn)
 
     if not modem.find():
-        print "{}: modem not found".format(argv[0])
+        print >> sys.stderr, "{}: modem not found".format(argv[0])
         return 1
 
-    modem.reset()
-    modem.open()
-
     try:
+        modem.reset()
+        modem.open()
         modem.start()
-    except CommunitationError:
-        print "{}: cannot connect to the Internet".format(argv[0])
+    except ModemException:
+        print >> sys.stderr, "{}: cannot connect to the Internet".format(argv[0])
+        return 1
 
     if args.mask:
         try:

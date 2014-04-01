@@ -29,6 +29,7 @@ class StateBase(object):
 
     def __init__(self, context):
         super(StateBase, self).__init__()
+
         self._context = context
         self._logger = logging.getLogger("modem:{}".format(self._name))
 
@@ -53,20 +54,26 @@ class StateBase(object):
     def network_info(self):
         raise NotImplementedError()
 
-    def _execute(self, argv):
-        proc = subprocess.Popen(argv, stdin=None, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
+    def _execute(self, *args):
+        exe = args[0]
+        proc = subprocess.Popen(
+            args=args,
+            stdin=None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
         pid = proc.pid
-        self._logger.debug("execute {} ({}): {}".format(argv[0], pid, " ".join(argv)))
+        self._logger.debug("execute {} ({}): {}".format(exe, pid, " ".join(args)))
         stdout, _ = proc.communicate()
         retcode = proc.returncode
 
-        self._logger.debug("{} ({}): return code {}".format(argv[0], pid, retcode))
+        self._logger.debug("{} ({}): return code {}".format(exe, pid, retcode))
+
         if stdout:
-            self._logger.debug("{} ({}):\n{}".format(argv[0], pid, stdout))
+            self._logger.debug("{} ({}):\n{}".format(exe, pid, stdout))
 
         if retcode != 0:
-            raise self._error("{} died with code {}".format(argv[0], retcode))
+            raise self._error("{} died with code {}".format(exe, retcode))
 
     def _error(self, message):
         self._logger.error(message)
@@ -79,6 +86,7 @@ class StateNotFound(StateBase):
 
     def __init__(self, context):
         super(StateNotFound, self).__init__(context)
+
         self._context.tty = None
         self._context.iface = None
 
@@ -87,6 +95,7 @@ class StateNotFound(StateBase):
             self._context.storage_vendor_id,
             self._context.storage_product_id,
         )
+
         if storage_path is not None:
             self._logger.debug("switch mode")
             self._switch_mode()
@@ -95,20 +104,26 @@ class StateNotFound(StateBase):
             self._context.modem_vendor_id,
             self._context.modem_product_id,
         )
+
         if modem_path is None:
-            self._logger.debug("modem usb path isn't found")
+            self._logger.debug("modem usb path not found")
             return False
+
         self._logger.debug("modem usb path: {}".format(modem_path))
 
         tty = self._find_tty(modem_path)
+
         if tty is None:
-            raise self._error("tty path isn't found")
+            raise self._error("tty path not found")
+
         self._context.tty = tty
         self._logger.debug("tty path: {}".format(tty))
 
         iface = self._find_iface(modem_path)
+
         if iface is None:
-            raise self._error("network interface isn't found")
+            raise self._error("network interface not found")
+
         self._context.iface = iface
         self._logger.debug("network interface: {}".format(iface))
 
@@ -116,33 +131,42 @@ class StateNotFound(StateBase):
         return True
 
     def _switch_mode(self):
-        argv = ("usb_modeswitch", "-W", "-I", "-s", "20",
-                "-v", self._context.storage_vendor_id,
-                "-p", self._context.storage_product_id,
-                "-V", self._context.modem_vendor_id,
-                "-P", self._context.modem_product_id,
-                "-u", "-1",
-                "-M", "55534243123456780000000000000011062000000100000000000000000000")
-        self._execute(argv)
+        self._execute(
+            "usb_modeswitch", "-W", "-I", "-s", "20",
+            "-v", self._context.storage_vendor_id,
+            "-p", self._context.storage_product_id,
+            "-V", self._context.modem_vendor_id,
+            "-P", self._context.modem_product_id,
+            "-u", "-1",
+            "-M", "55534243123456780000000000000011062000000100000000000000000000",
+        )
 
     @classmethod
     def _find_usb_device_path(cls, vendor_id, product_id):
         usb_devices_path = "/sys/bus/usb/devices"
         usb_devices_list = os.listdir(usb_devices_path)
+
         for device in usb_devices_list:
             device_path = os.path.join(usb_devices_path, device)
             idVendor_path = os.path.join(device_path, "idVendor")
             idProduct_path = os.path.join(device_path, "idProduct")
+
             if not os.path.exists(idVendor_path) \
                     or not os.path.exists(idProduct_path):
                 continue
+
             idVendor = open(idVendor_path).read().strip()
+
             if idVendor != vendor_id:
                 continue
+
             idProduct = open(idProduct_path).read().strip()
+
             if idProduct != product_id:
                 continue
+
             return cls._get_symlink_target(device_path)
+
         return None
 
     @staticmethod
@@ -157,33 +181,41 @@ class StateNotFound(StateBase):
     @classmethod
     def _find_tty(cls, device_path):
         usb_serial_path = "/sys/bus/usb-serial/devices"
+
         for tty in os.listdir(usb_serial_path):
             tty_symlink = os.path.join(usb_serial_path, tty)
             abs_tty_path = cls._get_symlink_target(tty_symlink)
+
             if abs_tty_path.startswith(device_path):
                 tty_dev_path = os.path.join("/dev", tty)
+
                 if os.path.exists(tty_dev_path):
                     return tty_dev_path
+
         return None
 
     @classmethod
     def _find_iface(cls, device_path):
         net_path = "/sys/class/net"
+
         for iface in os.listdir(net_path):
             iface_symlink = os.path.join(net_path, iface)
             abs_iface_path = cls._get_symlink_target(iface_symlink)
+
             if abs_iface_path.startswith(device_path):
                 return iface
+
         return None
 
     def reset(self):
-        argv = ("usb_modeswitch",
-                "-v", self._context.modem_vendor_id,
-                "-p", self._context.modem_product_id,
-                "-R")
-        self._execute(argv)
+        self._execute(
+            "usb_modeswitch",
+            "-v", self._context.modem_vendor_id,
+            "-p", self._context.modem_product_id,
+            "-R",
+        )
 
-    _not_found_err_msg = "modem is not found"
+    _not_found_err_msg = "modem not found"
 
     def open(self):
         raise ModemException(self._not_found_err_msg)
@@ -218,12 +250,15 @@ class StateClosed(StateBase):
         self._context.reset()
 
         die_time = time.time() + self._reset_timeout
+
         while die_time > time.time():
             if self._context.find():
                 break
+
             time.sleep(0.5)
+
         else:
-            raise self._error("modem didn't return to life after reset")
+            raise self._error("cannot find modem after reset")
 
     def open(self):
         self._context.state = "opened"
@@ -231,7 +266,7 @@ class StateClosed(StateBase):
     def close(self):
         pass
 
-    _not_opened_msg = "modem isn't opened"
+    _not_opened_msg = "modem not opened"
 
     def start(self):
         raise ModemException(self._not_opened_msg)
@@ -253,18 +288,11 @@ class pexpect_logger(object):
     def write(self, msg):
         for line in msg.split("\n"):
             line = "".join(c for c in line if c >= " ").strip()
-            if not line:
-                continue
-            self._logger.debug("{}:{}".format(self._action, line))
+
+            if line:
+                self._logger.debug("{}:{}".format(self._action, line))
 
     def flush(self):
-        pass
-
-
-def remove_file(filename):
-    try:
-        os.remove(filename)
-    except OSError:
         pass
 
 
@@ -274,20 +302,23 @@ class Connection(object):
 
     def __init__(self, tty):
         super(Connection, self).__init__()
+
         self._logger = logging.getLogger("modem:tty")
 
         fd, self._screen_cfg_path = tempfile.mkstemp(prefix="screen_", suffix=".cfg")
-        atexit.register(remove_file, self._screen_cfg_path)
+        atexit.register(self._remove_screen_cfg)
         fp = os.fdopen(fd, "w")
         fp.write("startup_message off\n")
         fp.write("hardstatus off\n")
         fp.close()
 
-        argv = ("screen", "-c", self._screen_cfg_path, tty, "9600")
-        self._tty = pexpect.spawn(argv[0], args=list(argv[1:]))
+        exe = "screen"
+        args = ["-c", self._screen_cfg_path, tty, "9600"]
+        self._tty = pexpect.spawn(exe, args=args)
         self._tty.setecho(False)
-        self._logger.debug("spawn {}: {}".format(argv[0], " ".join(argv)))
+        self._logger.debug("spawn {}: {}".format(exe, " ".join(args)))
         time.sleep(self._screen_init_time)
+
         try:
             # consume all initial screen output
             self._tty.read_nonblocking(0xFFFF, timeout=0)
@@ -295,8 +326,10 @@ class Connection(object):
             pass
         except pexpect.EOF:
             raise self._connection_died_error()
+
         if not self._tty.isalive():
             raise self._connection_died_error()
+
         self._tty.logfile_read = pexpect_logger(self._logger, "read")
         self._tty.logfile_send = pexpect_logger(self._logger, "send")
         self._logger.debug("connection established")
@@ -306,20 +339,30 @@ class Connection(object):
         self._logger.debug("connection ready")
 
     def __del__(self):
-        os.remove(self._screen_cfg_path)
+        self._remove_screen_cfg()
+
+    def _remove_screen_cfg(self):
+        try:
+            os.remove(self._screen_cfg_path)
+        except OSError:
+            pass
 
     def send(self, command, patterns=None, timeout=5):
         if not self._tty.isalive():
             raise self._connection_died_error()
+
         self._tty.send("{}\r\n".format(command))
+
         if patterns is None:
             return None
+
         try:
             self._tty.expect_exact(patterns, timeout=timeout)
         except pexpect.TIMEOUT:
             raise self._expect_timeout_error()
         except pexpect.EOF:
             raise self._connection_died_error()
+
         return self._tty.match
 
     _re_match_type = re.match(r"", "").__class__
@@ -331,9 +374,12 @@ class Connection(object):
             raise self._expect_timeout_error()
         except pexpect.EOF:
             raise self._connection_died_error()
+
         match = self._tty.match
+
         if not isinstance(match, self._re_match_type):
             raise self._expect_timeout_error()
+
         return match
 
     def isalive(self):
@@ -360,6 +406,7 @@ class StateOpened(StateBase):
 
     def __init__(self, context):
         super(StateOpened, self).__init__(context)
+
         self._con = Connection(self._context.tty)
 
     def find(self):
@@ -385,8 +432,7 @@ class StateOpened(StateBase):
         self._setup_iface()
 
     def _setup_iface(self):
-        argv = ("dhclient", self._context.iface)
-        self._execute(argv)
+        self._execute("dhclient", self._context.iface)
 
     def reset(self):
         self.close()
@@ -402,8 +448,10 @@ class StateOpened(StateBase):
         self._con.send("AT+CSQ")
         match = self._con.expect(self._regex_signal_strength)
         rssi = int(match.group("rssi"))
+
         if rssi == 99:
             return -1
+
         return rssi
 
     _regex_network_info = re.compile(
@@ -417,6 +465,7 @@ class StateOpened(StateBase):
         match = self._con.expect(self._regex_network_info)
 
         oper = match.group("oper")
+
         if oper:
             oper = oper.strip('"')
         else:
@@ -431,10 +480,13 @@ class StateOpened(StateBase):
         # 6 UTRAN with HSDPA and HSUPA = 3G
         # 7 E-UTRAN                    = 4G (LTE)
         act = match.group("act")
+
         if act is None:
             act = "N/A"
+
         else:
             act = int(act)
+
             if act <= 1:
                 act = "2G"
             elif act == 2:
@@ -465,6 +517,7 @@ class Modem(object):
 
     def __init__(self, apn):
         super(Modem, self).__init__()
+
         self._logger = logging.getLogger("modem")
 
         self.apn = apn
@@ -482,8 +535,8 @@ class Modem(object):
     def state(self, value):
         if value not in self._states:
             raise ValueError("unknow state: {}".format(value))
-        self._logger.debug("change state: {} -> {}".format(
-            self._state_str, value))
+
+        self._logger.debug("change state: {} -> {}".format(self._state_str, value))
         self._state = self._states[value](self)
         self._state_str = value
         self._logger.debug("new state: {}".format(value))
@@ -532,6 +585,7 @@ def setup_logging(quite, debug):
         stream = open("/dev/null", "w")
     else:
         stream = sys.stderr
+
     logging.basicConfig(
         stream=stream,
         level="DEBUG" if debug else "ERROR"
@@ -544,10 +598,10 @@ def monitor(modem, mask, interval):
             ss = modem.signal_strength()
             at, op = modem.network_info()
         except CommunitationError:
-            pass
-        else:
-            sys.stdout.write(mask.format(ss=ss, at=at, op=op))
-            sys.stdout.flush()
+            continue
+
+        sys.stdout.write(mask.format(ss=ss, at=at, op=op))
+        sys.stdout.flush()
         time.sleep(interval)
 
 
@@ -568,7 +622,7 @@ def main(argv=sys.argv):
     parser.add_argument(
         "-v", "--version",
         action="version",
-        version="%(prog)s v1.1"
+        version="%(prog)s v1.1.1"
     )
     parser.add_argument(
         "-m", "--monitor",
@@ -602,21 +656,27 @@ def main(argv=sys.argv):
     setup_logging(args.quite, args.debug)
 
     modem = Modem(apn="internet")
+
     if not modem.find():
-        print "{}: modem isn't found".format(argv[0])
+        print "{}: modem not found".format(argv[0])
         return 1
+
     modem.reset()
     modem.open()
+
     try:
         modem.start()
     except CommunitationError:
-        print "{}: can't connect to the Internet".format(argv[0])
+        print "{}: cannot connect to the Internet".format(argv[0])
+
     if args.mask:
         try:
             monitor(modem, args.mask, args.interval)
         except KeyboardInterrupt:
             pass
+
     modem.close()
+
     return 0
 
 

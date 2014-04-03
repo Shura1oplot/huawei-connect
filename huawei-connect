@@ -13,7 +13,6 @@ import re
 import pexpect
 import argparse
 import textwrap
-from string import maketrans
 
 
 def to_unicode(obj):
